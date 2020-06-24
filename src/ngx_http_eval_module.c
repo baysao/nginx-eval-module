@@ -34,6 +34,8 @@ typedef struct {
     ngx_str_t                   override_content_type;
     ngx_flag_t                  subrequest_in_memory;
     size_t                      buffer_size;
+    
+    ngx_flag_t                  inherit_body;
 } ngx_http_eval_loc_conf_t;
 
 
@@ -129,6 +131,13 @@ static ngx_command_t  ngx_http_eval_commands[] = {
       offsetof(ngx_http_eval_loc_conf_t, override_content_type),
       NULL },
 
+     { ngx_string("eval_inherit_body"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_eval_loc_conf_t, inherit_body),
+      NULL },
+    
     { ngx_string("eval_subrequest_in_memory"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
       ngx_http_eval_subrequest_in_memory,
@@ -298,6 +307,26 @@ ngx_http_eval_handler(ngx_http_request_t *r)
         return rc;
     }
 
+    if (!ecf->inherit_body) {
+        /*
+         * create a fake request body instead of discarding the real one
+         * in order to avoid attempts to read it
+         */
+        sr->request_body = ngx_pcalloc(r->pool, sizeof(ngx_http_request_body_t));
+        if (sr->request_body == NULL) {
+            return NGX_ERROR;
+        }
+    }
+    else {
+        sr->request_body = r->request_body;
+        sr->header_in = r->header_in;
+        sr->headers_in.content_length_n = r->headers_in.content_length_n;
+        sr->headers_in.content_length = r->headers_in.content_length;
+
+        r->headers_in.content_length_n = 0;
+        r->headers_in.content_length = NULL;
+    }
+    
     sr->discard_body = 1;
 
     /* we don't want to forward certain request headers to the subrequest */
@@ -318,8 +347,10 @@ ngx_http_eval_handler(ngx_http_request_t *r)
 
     ngx_http_set_ctx(sr, sr_ctx, ngx_http_eval_module);
 
-    dd("wait for subrequest to complete");
+   
 
+     
+ dd("wait for subrequest to complete");
     return NGX_DONE;
 }
 
@@ -615,6 +646,7 @@ ngx_http_eval_create_loc_conf(ngx_conf_t *cf)
     conf->escalate = NGX_CONF_UNSET;
     conf->buffer_size = NGX_CONF_UNSET_SIZE;
     conf->subrequest_in_memory = NGX_CONF_UNSET;
+conf->inherit_body = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -633,6 +665,7 @@ ngx_http_eval_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
                               (size_t) ngx_pagesize);
     ngx_conf_merge_value(conf->subrequest_in_memory,
                          prev->subrequest_in_memory, 0);
+ngx_conf_merge_value(conf->inherit_body, prev->inherit_body, 0);
 
     return NGX_CONF_OK;
 }
